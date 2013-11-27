@@ -1,8 +1,9 @@
 # encoding: UTF-8
 require "net/http"
+require 'fileutils'
 require "uri"
 require "json"
-#require 'nokogiri'
+require 'nokogiri'
 
 Dir.chdir(File.dirname(__FILE__))
 
@@ -22,7 +23,8 @@ def parseContent(items)
 		buffer.push("<div class = \"title\"><h1>#{item["title"]}</h1></div>\n")
 		buffer.push("<div class = \"item\" id=\"wrapper\" class=\"typo typo-selection\">\n")
 		buffer.push("<div class = \"author\">#{item["author"]}<div class = \"fetchtime\">#{item["fetchtime"]}</div></div>\n")
-		buffer.push("<div class = \"content\">#{item["content"]}</div>\n")
+		content = doImageCache("ImageCache", Nokogiri::HTML(item["content"])).to_html # image cache
+		buffer.push("<div class = \"content\">#{content}</div>\n")
 		buffer.push("<hr />")
 		buffer.push("<div class = \"link\">source : <a href=\"#{item["link"]}\">#{item["link"]}</a></div>\n")
 		buffer.push("</div>\n")
@@ -31,6 +33,33 @@ def parseContent(items)
 	}
 	
 	return {'res' => res, 'beginID' => id}
+end
+
+def doImageCache(title, doc)
+	path = "./res/#{title}_file/"
+	FileUtils.mkpath(path) unless File.exists?(path)
+	
+	doc.css("img").each do |img| 
+		src = URI.escape(img["src"])
+		uri = URI.parse(src)
+		filename = File.basename(uri.path)
+		puts "save: #{uri}"
+		
+		begin
+		Net::HTTP.start(uri.hostname) { |http|
+			resp = http.get(uri.path)
+			open(path + filename, "wb") { |file|
+				file.write(resp.body)
+			}
+		}
+		rescue 
+			img["src"] = ""
+		else  
+			img["src"] = "./#{title}_file/" + filename
+		end
+	end
+	
+	return doc
 end
 
 def saveToFiles(items)
