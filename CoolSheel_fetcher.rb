@@ -23,7 +23,8 @@ def parseContent(items)
 		buffer.push("<div class = \"title\"><h1>#{item["title"]}</h1></div>\n")
 		buffer.push("<div class = \"item\" id=\"wrapper\" class=\"typo typo-selection\">\n")
 		buffer.push("<div class = \"author\">#{item["author"]}<div class = \"fetchtime\">#{item["fetchtime"]}</div></div>\n")
-		content = doImageCache("ImageCache", Nokogiri::HTML(item["content"])).to_html # image cache
+		doc = Nokogiri::HTML(item["content"])
+		content = doImageCache("ImageCache", doc).to_html # image cache, code style
 		buffer.push("<div class = \"content\">#{content}</div>\n")
 		buffer.push("<hr />")
 		buffer.push("<div class = \"link\">source : <a href=\"#{item["link"]}\">#{item["link"]}</a></div>\n")
@@ -39,26 +40,38 @@ def doImageCache(title, doc)
 	path = "./res/#{title}_file/"
 	FileUtils.mkpath(path) unless File.exists?(path)
 	
+	imgUrls = []
+	
 	doc.css("img").each do |img| 
 		src = URI.escape(img["src"])
 		uri = URI.parse(src)
 		filename = File.basename(uri.path)
-		puts "save: #{uri}"
 		
-		begin
-		Net::HTTP.start(uri.hostname) { |http|
-			resp = http.get(uri.path)
-			open(path + filename, "wb") { |file|
-				file.write(resp.body)
+		imgUrls << uri
+		img["src"] = "./#{title}_file/" + filename
+	end
+
+	imgUrls.each_slice(6).to_a.each{ |group|
+		threads = []
+	
+		group.each {|uri|
+			threads << Thread.new { 
+				begin
+					Net::HTTP.start(uri.hostname) { |http|
+						resp = http.get(uri.path)
+						File.open(path + File.basename(uri.path), "wb") { |file|
+							file.write(resp.body)
+							puts "save: #{uri}"
+						}
+					}
+				rescue
+				end
 			}
 		}
-		rescue 
-			img["src"] = ""
-		else  
-			img["src"] = "./#{title}_file/" + filename
-		end
-	end
-	
+		
+		threads.each { |t| t.join }
+	}
+
 	return doc
 end
 
@@ -85,7 +98,7 @@ feedID = '9324758'
 fetchURL = 'http://9.douban.com/reader/j_read_blog_content'
 beginID = ''
 items = []
-3.times do
+loop do
 	contentHash = doGetContent(fetchURL, beginID, feedID)
 	itemsHash = parseContent(contentHash['entries'])
 	break unless contentHash['hasNext']
