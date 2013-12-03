@@ -3,68 +3,97 @@ require "net/http"
 require 'fileutils'
 require "uri"
 require "json"
+require 'digest'
 require 'nokogiri'
 
 Dir.chdir(File.dirname(__FILE__))
 
-def doGetContent(fetchUrl, beginID, id)
+def hash_url(url)
+	return Digest::MD5.hexdigest("#{url}")
+end
 
-	uri = URI(fetchUrl + '?begin=' + beginID + '&id=' + id)
-    json = JSON.parse(Net::HTTP.get(uri))	
-	return {'hasNext' => json['hasnext'], 'entries' => json['entries']}
+def login(http, usr, pwd)
+    path = "/login"
+    data = "email=#{usr}&password=#{pwd}"
+    headers = {
+      'Content-Type' => 'application/x-www-form-urlencoded'
+    }
+	resp = http.post(path, data, headers)
+
+    cookies_array = Array.new
+    resp.get_fields('set-cookie').each { | cookie |
+        cookies_array.push(cookie.split('; ')[0])
+    }
+    cookies = cookies_array.join('; ')
+    puts resp.body
+
+    return cookies
+end
+
+def getContent(http, cookies, id, page, pageSize)
+    path = "/rssreader?method=FeedItem.getFeedItemList"
+    data = "params={\"feedIdList\":\"#{id}\",\"page\":#{page},\"pageSize\":#{pageSize}}"
+    headers = {
+      'Cookie' => cookies,
+      'Content-Type' => 'application/x-www-form-urlencoded'
+    }
+	resp = http.post(path, data, headers)
+    return JSON.parse(resp.body)["data"]
 end
 
 def parseContent(items)
 
 	res = []
-	id = ''
 	items.each { |item|
 		buffer = []
 		buffer.push("<div class = \"title\"><h1>#{item["title"]}</h1></div>\n")
 		buffer.push("<div class = \"item\" id=\"wrapper\" class=\"typo typo-selection\">\n")
-		buffer.push("<div class = \"author\">#{item["author"]}<div class = \"fetchtime\">#{item["fetchtime"]}</div></div>\n")
-		doc = Nokogiri::HTML(item["content"])
+		buffer.push("<div class = \"author\">#{item["author"]}<div class = \"fetchtime\">#{item["time"]}</div></div>\n")
+		doc = Nokogiri::HTML(item["description"])
 		content = doImageCache("ImageCache", doc).to_html # image cache, code style
 		buffer.push("<div class = \"content\">#{content}</div>\n")
 		buffer.push("<hr />")
-		buffer.push("<div class = \"link\">source : <a href=\"#{item["link"]}\">#{item["link"]}</a></div>\n")
+		buffer.push("<div class = \"link\">source : <a href=\"#{item["url"]}\">#{item["url"]}</a></div>\n")
 		buffer.push("</div>\n")
-		res.push({'time' => item["fetchtime"], 'title' => item["title"], 'content' => buffer.join})
-		id = item['id']
+		res.push({'time' => item["time"], 'title' => item["title"], 'content' => buffer.join})
+
+        puts "save: #{item["title"]}"
 	}
 	
-	return {'res' => res, 'beginID' => id}
+	return res
 end
 
 def doImageCache(title, doc)
 	path = "./res/#{title}_file/"
 	FileUtils.mkpath(path) unless File.exists?(path)
 	
-	imgUrls = []
+	imgEntities = []
 	
 	doc.css("img").each do |img| 
-		src = URI.escape(img["src"])
-		uri = URI.parse(src)
-		filename = File.basename(uri.path)
-		
-		imgUrls << uri
+		uri = URI.parse(img["src"])
+		filename = hash_url("#{uri.to_s}") # hash url for save files
 		img["src"] = "./#{title}_file/" + filename
+		
+		imgEntities << {'uri'=>uri, 'hash'=>filename}
 	end
 
-	imgUrls.each_slice(6).to_a.each{ |group|
+	imgEntities.each_slice(6).to_a.each{ |group|
 		threads = []
 	
-		group.each {|uri|
+		group.each {|entity|
 			threads << Thread.new { 
 				begin
+					uri = entity['uri']
+					filename = entity['hash']
 					Net::HTTP.start(uri.hostname) { |http|
-						resp = http.get(uri.path)
-						File.open(path + File.basename(uri.path), "wb") { |file|
+						resp = http.get(uri.to_s)
+						File.open(path + filename, "wb") { |file|
 							file.write(resp.body)
-							puts "save: #{uri}"
+							print "."
 						}
 					}
 				rescue
+					puts "error: \n    #{uri}"
 				end
 			}
 		}
@@ -94,19 +123,25 @@ def saveToFiles(items)
 	}
 end
 
-feedID = '9324758'
-fetchURL = 'http://9.douban.com/reader/j_read_blog_content'
-beginID = ''
+feedId = "322282"
+usr = "legendmohe@126.com"
+pwd = "891010"
+pagesize = "50"
+page = 0
 items = []
-loop do
-	contentHash = doGetContent(fetchURL, beginID, feedID)
-	itemsHash = parseContent(contentHash['entries'])
-	break unless contentHash['hasNext']
-	puts "downloaded : #{itemsHash['res'].size} BeginID: #{itemsHash['beginID']}"
-	beginID = itemsHash['beginID']
-	items += itemsHash['res']
+
+http = Net::HTTP.new('xianguo.com', 80)
+cookies = login(http, usr, pwd)
+2.times do
+    jContent = getContent(http, cookies, feedId, page, pagesize)
+    items += parseContent(jContent['list'])
+
+    puts "current: \
+        #{jContent["pageSize"]*(jContent["page"] + 1) + jContent["currentPageSize"]} \
+        / \
+        #{jContent["total"]}"
+
+    break if jContent["page"] >= jContent["totalPage"]
 end
 
 saveToFiles(items)
-
-
