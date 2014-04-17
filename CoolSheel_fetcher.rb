@@ -45,19 +45,19 @@ def parseContent(items)
 
 	res = []
 	items.each { |item|
+        puts "save: #{item["title"]}"
+        
 		buffer = []
 		buffer.push("<div class = \"title\"><h1>#{item["title"]}</h1></div>\n")
 		buffer.push("<div class = \"item\" id=\"wrapper\" class=\"typo typo-selection\">\n")
 		buffer.push("<div class = \"author\">#{item["author"]}<div class = \"fetchtime\">#{item["time"]}</div></div>\n")
 		doc = Nokogiri::HTML(item["description"])
-		content = doImageCache("ImageCache", doc).to_html # image cache, code style
+		content = doImageCache("ImageCache", doc).to_html # image cache
 		buffer.push("<div class = \"content\">#{content}</div>\n")
 		buffer.push("<hr />")
 		buffer.push("<div class = \"link\">source : <a href=\"#{item["url"]}\">#{item["url"]}</a></div>\n")
 		buffer.push("</div>\n")
 		res.push({'time' => item["time"], 'title' => item["title"], 'content' => buffer.join})
-
-        puts "save: #{item["title"]}"
 	}
 	
 	return res
@@ -74,6 +74,18 @@ def doImageCache(title, doc)
 		filename = hash_url("#{uri.to_s}") # hash url for save files
 		img["src"] = "./#{title}_file/" + filename
 		
+        #begin
+        #    Net::HTTP.start(uri.hostname) { |http|
+        #        resp = http.get(uri.to_s)
+        #        File.open(path + filename, "wb") { |file|
+        #            file.write(resp.body)
+        #            print "."
+        #        }
+        #    }
+        #rescue
+        #    puts "error: \n    #{uri}"
+        #end
+
 		imgEntities << {'uri'=>uri, 'hash'=>filename}
 	end
 
@@ -101,6 +113,8 @@ def doImageCache(title, doc)
 		threads.each { |t| t.join }
 	}
 
+    print "\n"
+
 	return doc
 end
 
@@ -123,21 +137,20 @@ def saveToFiles(items)
 	}
 end
 
-feedId = "322282"
+feedId = "8086"
 usr = "legendmohe@126.com"
 pwd = "891010"
-pagesize = "50"
-page = 0
+pagesize = "30"
 items = []
 
 http = Net::HTTP.new('xianguo.com', 80)
 cookies = login(http, usr, pwd)
-2.times do
+0.upto(10) do |page|
     jContent = getContent(http, cookies, feedId, page, pagesize)
     items += parseContent(jContent['list'])
 
     puts "current: \
-        #{jContent["pageSize"]*(jContent["page"] + 1) + jContent["currentPageSize"]} \
+        #{jContent["pageSize"]*jContent["page"] + jContent["currentPageSize"]} \
         / \
         #{jContent["total"]}"
 
